@@ -2,7 +2,7 @@
  *
  * MSM MDP Interface (used by framebuffer core)
  *
- * Copyright (c) 2007-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2013, The Linux Foundation. All rights reserved.
  * Copyright (C) 2007 Google Incorporated
  *
  * This software is licensed under the terms of the GNU General Public
@@ -41,7 +41,6 @@
 #include "msm_fb.h"
 #ifdef CONFIG_FB_MSM_MDP40
 #include "mdp4.h"
-#include "dlog.h"
 #endif
 #include "mipi_dsi.h"
 
@@ -49,17 +48,8 @@
 #include "mdnie_lite_tuning.h"
 #endif
 
-#if defined (CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_QHD_PT) || defined (CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
-/* Check if LCD was connected. */
-#if defined(CONFIG_MACH_COMANCHE)
-#include "mipi_samsung_oled-8960.h"
-#else
-#include "mipi_samsung_oled-8930.h"
-#endif
-#else
 /* Check if LCD was connected. */
 #include "mipi_samsung_octa.h"
-#endif
 
 uint32 mdp4_extn_disp;
 u32 mdp_iommu_max_map_size;
@@ -180,10 +170,6 @@ static struct early_suspend early_suspend;
 static u32 mdp_irq;
 
 static uint32 mdp_prim_panel_type = NO_PANEL;
-#if defined(CONFIG_MIPI_SAMSUNG_ESD_REFRESH) || defined(CONFIG_ESD_ERR_FG_RECOVERY)
-extern struct mutex power_state_chagne;
-boolean mdp_shutdown_check = FALSE;
-#endif
 #ifndef CONFIG_FB_MSM_MDP22
 
 #define MDP_HIST_LUT_SIZE (256)
@@ -561,7 +547,7 @@ error:
 }
 
 spinlock_t mdp_lut_push_lock;
-int mdp_lut_i;
+static int mdp_lut_i;
 
 static int mdp_lut_hw_update(struct fb_cmap *cmap)
 {
@@ -572,12 +558,6 @@ static int mdp_lut_hw_update(struct fb_cmap *cmap)
 	c[0] = cmap->green;
 	c[1] = cmap->blue;
 	c[2] = cmap->red;
-
-	if (cmap->start > MDP_HIST_LUT_SIZE || cmap->len > MDP_HIST_LUT_SIZE ||
-		(cmap->start + cmap->len > MDP_HIST_LUT_SIZE)) {
-		pr_err("mdp_lut_hw_update invalid arguments\n");
-		return -EINVAL;
-	}
 
 	for (i = 0; i < cmap->len; i++) {
 		if (copy_from_user(&r, cmap->red++, sizeof(r)) ||
@@ -598,8 +578,8 @@ static int mdp_lut_hw_update(struct fb_cmap *cmap)
 	return 0;
 }
 
-int mdp_lut_push;
-int mdp_lut_push_i;
+static int mdp_lut_push;
+static int mdp_lut_push_i;
 static int mdp_lut_resume_needed;
 
 static void mdp_lut_status_restore(void)
@@ -2345,9 +2325,6 @@ static void mdp_drv_init(void)
 }
 
 static int mdp_probe(struct platform_device *pdev);
-#ifdef CONFIG_MDP_SHUTDOWN
-static void mdp_shutdown(struct platform_device *pdev);
-#endif
 static int mdp_remove(struct platform_device *pdev);
 
 static int mdp_runtime_suspend(struct device *dev)
@@ -2375,11 +2352,7 @@ static struct platform_driver mdp_driver = {
 	.suspend = mdp_suspend,
 	.resume = NULL,
 #endif
-#ifdef CONFIG_MDP_SHUTDOWN
-	.shutdown = mdp_shutdown,
-#else
 	.shutdown = NULL,
-#endif
 	.driver = {
 		/*
 		 * Driver name must match the device name added in
@@ -2419,12 +2392,10 @@ static int mdp_off(struct platform_device *pdev)
 		mdp4_overlay_writeback_off(pdev);		  
 
 	mdp_clk_ctrl(0);
-
 #ifdef CONFIG_MSM_BUS_SCALING
-#if defined(CONFIG_MACH_WILCOX_EUR_LTE)
-	msleep(20);
-#endif
+	
 	mdp_bus_scale_update_request(0, 0, 0, 0);
+	
 #endif
 	pr_debug("%s:-\n", __func__);
 	return ret;
@@ -2460,6 +2431,11 @@ static int mdp_on(struct platform_device *pdev)
 		mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 		mdp_clk_ctrl(1);
 		mdp_bus_scale_restore_request();
+
+		if(mfd->cont_splash_done)
+		{
+			mdp4_sw_reset(0x17);
+		}
 
 		mdp4_hw_init();
 
@@ -2823,26 +2799,7 @@ static int mdp_irq_clk_setup(struct platform_device *pdev,
 #endif
 	return 0;
 }
-#ifdef CONFIG_MDP_SHUTDOWN
-static void mdp_shutdown(struct platform_device *pdev)
-{
-	struct msm_fb_data_type *mfd = platform_get_drvdata(pdev);
-	mfd = platform_get_drvdata(pdev);
 
-	if (!mfd)
-		return;
-
-	pr_info("%s: panel_next_off seq\n", __func__);
-#if defined(CONFIG_MIPI_SAMSUNG_ESD_REFRESH) || defined(CONFIG_ESD_ERR_FG_RECOVERY)
-	mdp_shutdown_check = true;
-	mutex_lock(&power_state_chagne);
-	panel_next_off(pdev);
-	mutex_unlock(&power_state_chagne);
-#else
-	panel_next_off(pdev);
-#endif
-}
-#endif
 static int mdp_probe(struct platform_device *pdev)
 {
 	struct platform_device *msm_fb_dev = NULL;
@@ -2858,7 +2815,7 @@ static int mdp_probe(struct platform_device *pdev)
 #if defined(CONFIG_FB_MSM_MIPI_DSI) && defined(CONFIG_FB_MSM_MDP40)
 	struct mipi_panel_info *mipi;
 #endif
-#if !defined(CONFIG_MACH_MELIUS) && !defined(CONFIG_MACH_SERRANO) && !defined(CONFIG_MACH_GOLDEN) && !defined(CONFIG_MACH_LT02) && !defined(CONFIG_MACH_WILCOX_EUR_LTE)
+#if !defined(CONFIG_MACH_MELIUS)
 	static int contSplash_update_done;
 #endif
 	if ((pdev->id == 0) && (pdev->num_resources > 0)) {
@@ -2930,7 +2887,7 @@ static int mdp_probe(struct platform_device *pdev)
 	mfd->vsync_init = NULL;
 
 	if (mdp_pdata) {
-#if !defined (CONFIG_MACH_MELIUS) && !defined(CONFIG_MACH_SERRANO) && !defined(CONFIG_MACH_GOLDEN) && !defined(CONFIG_MACH_LT02) && !defined(CONFIG_MACH_WILCOX_EUR_LTE)
+#if !defined (CONFIG_MACH_MELIUS)
 		if ((get_lcd_attached()) && mdp_pdata->cont_splash_enabled) {
 			mfd->cont_splash_done = 0;
 			if (!contSplash_update_done) {
@@ -2974,16 +2931,11 @@ static int mdp_probe(struct platform_device *pdev)
 		rc = -ENOMEM;
 		goto mdp_probe_err;
 	}
-#if defined (CONFIG_MACH_MELIUS) || defined (CONFIG_MACH_SERRANO) || defined (CONFIG_MACH_GOLDEN) || defined (CONFIG_MACH_LT02) || defined(CONFIG_MACH_WILCOX_EUR_LTE)
+#if defined (CONFIG_MACH_MELIUS)
 
 	if (mdp_pdata) {
-#if defined (CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_QHD_PT)
-		if ((get_lcd_attached()) && mdp_pdata->cont_splash_enabled &&
-				 mfd->panel_info.pdest == DISPLAY_1) {
-#else
 		if (mdp_pdata->cont_splash_enabled &&
 				 mfd->panel_info.pdest == DISPLAY_1) {
-#endif
 			char *cp;
 			uint32 bpp = 3;
 			/*read panel wxh and calculate splash screen
@@ -3295,8 +3247,6 @@ static int mdp_probe(struct platform_device *pdev)
 			pdata->off = mdp4_overlay_writeback_off;
 			mfd->dma_fnc = mdp4_writeback_overlay;
 			mfd->dma = &dma_wb_data;
-			mutex_init(&mfd->writeback_mutex);
-			mutex_init(&mfd->unregister_mutex);
 			mdp4_display_intf_sel(EXTERNAL_INTF_SEL, DTV_INTF);
 		}
 		break;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -71,6 +71,23 @@
 #define KGSL_STATS_ADD(_size, _stat, _max) \
 	do { _stat += (_size); if (_stat > _max) _max = _stat; } while (0)
 
+
+#define KGSL_MEMFREE_HIST_SIZE	((int)(PAGE_SIZE * 2))
+
+struct kgsl_memfree_hist_elem {
+	unsigned int pid;
+	unsigned int gpuaddr;
+	unsigned int size;
+	unsigned int flags;
+};
+
+struct kgsl_memfree_hist {
+	void *base_hist_rb;
+	unsigned int size;
+	struct kgsl_memfree_hist_elem *wptr;
+};
+
+
 struct kgsl_device;
 struct kgsl_context;
 
@@ -98,6 +115,9 @@ struct kgsl_driver {
 	struct mutex devlock;
 
 	void *ptpool;
+
+	struct mutex memfree_hist_mutex;
+	struct kgsl_memfree_hist memfree_hist;
 
 	struct {
 		unsigned int vmalloc;
@@ -220,9 +240,6 @@ void kgsl_trace_issueibcmds(struct kgsl_device *device, int id,
 		unsigned int timestamp, unsigned int flags,
 		int result, unsigned int type);
 
-void kgsl_trace_kgsl_tz_params(struct kgsl_device *device, s64 total_time,
-		 s64 busy_time, int idle_time, int tz_val);
-
 #ifdef CONFIG_MSM_KGSL_DRM
 extern int kgsl_drm_init(struct platform_device *dev);
 extern void kgsl_drm_exit(void);
@@ -245,7 +262,7 @@ static inline int kgsl_gpuaddr_in_memdesc(const struct kgsl_memdesc *memdesc,
 		size = 1;
 
 	/* don't overflow */
-	if (size > UINT_MAX - gpuaddr)
+	if ((gpuaddr + size) < gpuaddr)
 		return 0;
 
 	if (gpuaddr >= memdesc->gpuaddr &&
@@ -296,10 +313,10 @@ static inline int timestamp_cmp(unsigned int a, unsigned int b)
 	return ((a > b) && (a - b <= KGSL_TIMESTAMP_WINDOW)) ? 1 : -1;
 }
 
-static inline int
+static inline void
 kgsl_mem_entry_get(struct kgsl_mem_entry *entry)
 {
-	return kref_get_unless_zero(&entry->refcount);
+	kref_get(&entry->refcount);
 }
 
 static inline void
