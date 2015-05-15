@@ -51,7 +51,9 @@ void *wlan_static_scan_buf0;
 void *wlan_static_scan_buf1;
 void *wlan_static_dhd_info_buf;
 
+#if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE)
 #define ENABLE_4335BT_WAR
+#endif
 
 #ifdef ENABLE_4335BT_WAR
 static int bt_off = 0;
@@ -212,6 +214,7 @@ static int brcm_wlan_power(int onoff,bool b0rev)
 static int brcm_wlan_power(int onoff)
 #endif
 {
+	int ret = 0;
 	printk(KERN_INFO"------------------------------------------------");
 	printk(KERN_INFO"------------------------------------------------\n");
 	printk(KERN_INFO"%s Enter: power %s\n", __func__, onoff ? "on" : "off");
@@ -239,7 +242,7 @@ static int brcm_wlan_power(int onoff)
 		if (ice_gpiox_set(FPGA_GPIO_WLAN_EN, 1)) {		// yhcha-patch
 			printk(KERN_ERR "%s: WL_REG_ON  failed to pull up\n",
 				__func__);
-			return -EIO;
+			ret =  -EIO;
 		}
 	} else {
 		/*
@@ -252,7 +255,7 @@ static int brcm_wlan_power(int onoff)
 		if (ice_gpiox_set(FPGA_GPIO_WLAN_EN, 0)) {		// yhcha-patch
 			printk(KERN_ERR "%s: WL_REG_ON  failed to pull down\n",
 				__func__);
-			return -EIO;
+			ret = -EIO;
 		}
 	}
 #ifdef ENABLE_4335BT_WAR
@@ -262,7 +265,7 @@ static int brcm_wlan_power(int onoff)
 		printk("[brcm_wlan_power] BT_REG_OFF.\n");
 	}
 #endif
-	return 0;
+	return ret;
 }
 
 static int brcm_wlan_reset(int onoff)
